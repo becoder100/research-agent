@@ -4,7 +4,10 @@ from typing import Optional
 
 import chainlit as cl
 import chainlit.data as cl_data
+from chainlit.server import app as chainlit_app
 from dotenv import load_dotenv
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
 from agent.nodes import (
     answer_followup,
@@ -87,31 +90,50 @@ async def _send_exports(report: str, query: str) -> None:
         await cl.Message(content=f"⚠️ Export failed: {e}").send()
 
 
-# ── Auth ───────────────────────────────────────────────────────────────────
-# The login page JS encodes register intent by prefixing the password with
-# "__reg__:" when the user clicks "Create Account".  Login checks existing
-# users only; register rejects duplicate usernames.
+# ── Registration endpoint (called by /public/register.html) ────────────────
+
+@chainlit_app.post("/api/register")
+async def register_endpoint(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    email    = (body.get("email")    or "").strip()
+    username = (body.get("username") or "").strip()
+    password =  body.get("password") or ""
+
+    if not email or not username or not password:
+        return JSONResponse({"error": "All fields are required"}, status_code=400)
+    if len(username) < 3:
+        return JSONResponse({"error": "Username must be at least 3 characters"}, status_code=400)
+    if len(password) < 6:
+        return JSONResponse({"error": "Password must be at least 6 characters"}, status_code=400)
+
+    await init_db()
+    data_layer: SQLiteDataLayer = cl_data.get_data_layer()
+
+    if await data_layer.get_user(username):
+        return JSONResponse({"error": "Username already taken — choose a different one"}, status_code=400)
+
+    user = await data_layer.get_or_register_user(username, password, email=email)
+    if user:
+        return JSONResponse({"success": True})
+    return JSONResponse({"error": "Registration failed, please try again"}, status_code=500)
+
+
+# ── Auth (login only — new users register via /public/register.html) ────────
 
 @cl.password_auth_callback
 async def auth_callback(username: str, password: str) -> Optional[cl.User]:
     await init_db()
     data_layer: SQLiteDataLayer = cl_data.get_data_layer()
 
-    is_register = password.startswith("__reg__:")
-    actual_password = password[len("__reg__:"):] if is_register else password
-
     existing = await data_layer.get_user(username)
-
-    if is_register:
-        if existing:
-            return None  # Username already taken
-        user = await data_layer.get_or_register_user(username, actual_password)
-        return cl.User(identifier=user.identifier, metadata=user.metadata) if user else None
-
-    # Login flow — reject unknown usernames outright
     if not existing:
-        return None
-    verified = await data_layer.verify_user(username, actual_password)
+        return None  # Unknown user — direct them to register
+
+    verified = await data_layer.verify_user(username, password)
     return cl.User(identifier=username, metadata={}) if verified else None
 
 

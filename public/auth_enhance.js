@@ -1,47 +1,31 @@
 (function () {
   'use strict';
 
-  var isRegister = false;
-
-  // Update a React-controlled input's value so React state stays in sync.
-  function setInputValue(input, value) {
-    var nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    nativeSet.call(input, value);
-    // Make React think the value changed by resetting its internal tracker
-    var tracker = input._valueTracker;
-    if (tracker) tracker.setValue('');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-
   function injectStyles() {
     if (document.getElementById('ra-styles')) return;
-    var style = document.createElement('style');
-    style.id = 'ra-styles';
-    style.textContent =
+    var s = document.createElement('style');
+    s.id = 'ra-styles';
+    s.textContent =
       '#ra-brand{text-align:center;padding:22px 0 4px}' +
       '#ra-brand svg{display:block;margin:0 auto 10px}' +
       '#ra-brand .ra-name{color:#fff;font:700 22px/1.2 Arial,sans-serif;letter-spacing:.4px}' +
       '#ra-brand .ra-tag{color:#64748b;font:12px/1.5 Arial,sans-serif;margin-top:5px}' +
-      '#ra-switch{text-align:center;margin-top:14px;font:13px Arial,sans-serif;color:#94a3b8}' +
-      '#ra-switch a{color:#38bdf8;text-decoration:none;font-weight:500}' +
-      '#ra-switch a:hover{text-decoration:underline}';
-    document.head.appendChild(style);
+      '#ra-reg-link{text-align:center;margin-top:14px;font:13px Arial,sans-serif;color:#94a3b8}' +
+      '#ra-reg-link a{color:#38bdf8;text-decoration:none;font-weight:500}' +
+      '#ra-reg-link a:hover{text-decoration:underline}';
+    document.head.appendChild(s);
   }
 
   function tryEnhance() {
     var form = document.querySelector('form');
     if (!form) return;
-
     var submitBtn = form.querySelector('button[type="submit"]');
     if (!submitBtn) return;
-
-    // Already enhanced this form
-    if (document.getElementById('ra-brand')) return;
+    if (document.getElementById('ra-brand')) return; // already done
 
     injectStyles();
-    isRegister = false;
 
-    // ── Brand block above the login card ──────────────────────────────────
+    // ── Logo + app name above the login card ──────────────────────────────
     var brand = document.createElement('div');
     brand.id = 'ra-brand';
     brand.innerHTML =
@@ -61,48 +45,19 @@
       '<div class="ra-name">Research Agent</div>' +
       '<div class="ra-tag">Multi-Source AI Research Assistant</div>';
 
-    var container = form.parentElement;
-    container.insertBefore(brand, container.firstChild);
+    form.parentElement.insertBefore(brand, form.parentElement.firstChild);
 
-    // ── Sign In / Register toggle below the submit button ─────────────────
-    var switchArea = document.createElement('div');
-    switchArea.id = 'ra-switch';
-    switchArea.innerHTML = 'New here? <a id="ra-toggle" href="#">Create an account</a>';
+    // ── "Don't have an account?" link below the Sign In button ───────────
+    var regLink = document.createElement('div');
+    regLink.id = 'ra-reg-link';
+    regLink.innerHTML = "Don't have an account? <a href=\"/public/register.html\">Create one</a>";
 
     var btnWrapper = submitBtn.closest('div') || submitBtn.parentElement;
-    btnWrapper.parentNode.insertBefore(switchArea, btnWrapper.nextSibling);
-
-    document.getElementById('ra-toggle').addEventListener('click', function (e) {
-      e.preventDefault();
-      isRegister = !isRegister;
-      if (isRegister) {
-        submitBtn.textContent = 'Create Account';
-        this.textContent = 'Sign in instead';
-        this.previousSibling.textContent = 'Already have an account? ';
-      } else {
-        submitBtn.textContent = 'Sign In';
-        this.textContent = 'Create an account';
-        this.previousSibling.textContent = 'New here? ';
-      }
-    });
-
-    // ── Intercept submit to encode register intent in password field ───────
-    // Runs in capture phase so our listener fires before React's click handler.
-    // setInputValue triggers a synchronous React state update so the new value
-    // reaches the server when Chainlit POSTs the credentials.
-    submitBtn.addEventListener('click', function () {
-      if (!isRegister) return;
-      var pw = form.querySelector('input[type="password"]');
-      if (pw && !pw.value.startsWith('__reg__:')) {
-        setInputValue(pw, '__reg__:' + pw.value);
-      }
-    }, true);
+    btnWrapper.parentNode.insertBefore(regLink, btnWrapper.nextSibling);
   }
 
-  // Watch for the React-rendered login form to appear
-  var observer = new MutationObserver(tryEnhance);
-  observer.observe(document.documentElement, { childList: true, subtree: true });
-
+  var obs = new MutationObserver(tryEnhance);
+  obs.observe(document.documentElement, { childList: true, subtree: true });
   tryEnhance();
   setTimeout(tryEnhance, 400);
   setTimeout(tryEnhance, 1200);

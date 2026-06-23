@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create Account — Research Agent</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f172a;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: Arial, sans-serif;
+    }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      padding: 36px 32px 28px;
+      width: 100%;
+      max-width: 400px;
+    }
+
+    /* ── Brand ── */
+    .brand { text-align: center; margin-bottom: 24px; }
+    .brand svg { display: block; margin: 0 auto 10px; }
+    .brand .name { color: #fff; font-size: 22px; font-weight: 700; letter-spacing: .4px; }
+    .brand .tag  { color: #64748b; font-size: 12px; margin-top: 4px; }
+
+    /* ── Form ── */
+    h2 { color: #fff; font-size: 17px; text-align: center; margin-bottom: 22px; }
+
+    label {
+      display: block;
+      color: #94a3b8;
+      font-size: 13px;
+      margin-bottom: 5px;
+    }
+
+    input {
+      width: 100%;
+      padding: 10px 13px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #f1f5f9;
+      font-size: 14px;
+      margin-bottom: 16px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input:focus { border-color: #38bdf8; }
+    input::placeholder { color: #475569; }
+
+    button {
+      width: 100%;
+      padding: 11px;
+      background: #38bdf8;
+      color: #0f172a;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 4px;
+      transition: background .15s;
+    }
+    button:hover:not(:disabled) { background: #7dd3fc; }
+    button:disabled { background: #1e3a4a; color: #475569; cursor: not-allowed; }
+
+    /* ── Alerts ── */
+    .alert {
+      font-size: 13px;
+      border-radius: 8px;
+      padding: 10px 13px;
+      margin-bottom: 14px;
+      display: none;
+    }
+    .alert.error   { background: #450a0a; border: 1px solid #7f1d1d; color: #fca5a5; }
+    .alert.success { background: #052e16; border: 1px solid #14532d; color: #86efac; }
+
+    /* ── Footer link ── */
+    .footer { text-align: center; margin-top: 18px; font-size: 13px; color: #94a3b8; }
+    .footer a { color: #38bdf8; text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+<div class="card">
+
+  <!-- Brand -->
+  <div class="brand">
+    <svg width="54" height="54" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+      <rect width="120" height="120" rx="20" fill="#0f172a"/>
+      <circle cx="50" cy="50" r="26" fill="none" stroke="#38bdf8" stroke-width="5.5"/>
+      <line x1="68" y1="68" x2="90" y2="90" stroke="#38bdf8" stroke-width="5.5" stroke-linecap="round"/>
+      <circle cx="50" cy="40" r="4" fill="#38bdf8"/>
+      <circle cx="38" cy="50" r="4" fill="#38bdf8"/>
+      <circle cx="50" cy="60" r="4" fill="#38bdf8"/>
+      <circle cx="62" cy="50" r="4" fill="#38bdf8"/>
+      <line x1="50" y1="40" x2="38" y2="50" stroke="#38bdf8" stroke-width="1.8" opacity=".55"/>
+      <line x1="38" y1="50" x2="50" y2="60" stroke="#38bdf8" stroke-width="1.8" opacity=".55"/>
+      <line x1="50" y1="60" x2="62" y2="50" stroke="#38bdf8" stroke-width="1.8" opacity=".55"/>
+      <line x1="62" y1="50" x2="50" y2="40" stroke="#38bdf8" stroke-width="1.8" opacity=".55"/>
+    </svg>
+    <div class="name">Research Agent</div>
+    <div class="tag">Multi-Source AI Research Assistant</div>
+  </div>
+
+  <h2>Create Account</h2>
+
+  <div class="alert error"   id="err-msg"></div>
+  <div class="alert success" id="ok-msg"></div>
+
+  <form id="reg-form" novalidate>
+    <label for="email">Email</label>
+    <input type="email" id="email" placeholder="you@example.com" autocomplete="email" required />
+
+    <label for="username">Username</label>
+    <input type="text" id="username" placeholder="Choose a username (min 3 chars)" autocomplete="username" required />
+
+    <label for="password">Password</label>
+    <input type="password" id="password" placeholder="Choose a password (min 6 chars)" autocomplete="new-password" required />
+
+    <label for="confirm">Confirm Password</label>
+    <input type="password" id="confirm" placeholder="Repeat your password" autocomplete="new-password" required />
+
+    <button type="submit" id="submit-btn">Create Account</button>
+  </form>
+
+  <div class="footer">
+    Already have an account? <a href="/">Sign in</a>
+  </div>
+</div>
+
+<script>
+(function () {
+  var form      = document.getElementById('reg-form');
+  var errEl     = document.getElementById('err-msg');
+  var okEl      = document.getElementById('ok-msg');
+  var submitBtn = document.getElementById('submit-btn');
+
+  function showError(msg) {
+    errEl.textContent = msg;
+    errEl.style.display = 'block';
+    okEl.style.display  = 'none';
+  }
+
+  function showSuccess(msg) {
+    okEl.textContent  = msg;
+    okEl.style.display = 'block';
+    errEl.style.display = 'none';
+  }
+
+  function isValidEmail(v) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  }
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+
+    var email    = document.getElementById('email').value.trim();
+    var username = document.getElementById('username').value.trim();
+    var password = document.getElementById('password').value;
+    var confirm  = document.getElementById('confirm').value;
+
+    errEl.style.display = 'none';
+    okEl.style.display  = 'none';
+
+    // Client-side validation
+    if (!email || !username || !password || !confirm) {
+      showError('All fields are required.');
+      return;
+    }
+    if (!isValidEmail(email)) {
+      showError('Please enter a valid email address.');
+      return;
+    }
+    if (username.length < 3) {
+      showError('Username must be at least 3 characters.');
+      return;
+    }
+    if (/\s/.test(username)) {
+      showError('Username cannot contain spaces.');
+      return;
+    }
+    if (password.length < 6) {
+      showError('Password must be at least 6 characters.');
+      return;
+    }
+    if (password !== confirm) {
+      showError('Passwords do not match.');
+      return;
+    }
+
+    submitBtn.disabled    = true;
+    submitBtn.textContent = 'Creating account…';
+
+    try {
+      var res  = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, username: username, password: password })
+      });
+      var data = await res.json();
+
+      if (res.ok) {
+        showSuccess('Account created! Redirecting to sign in…');
+        setTimeout(function () { window.location.href = '/'; }, 1600);
+      } else {
+        showError(data.error || 'Registration failed. Please try again.');
+        submitBtn.disabled    = false;
+        submitBtn.textContent = 'Create Account';
+      }
+    } catch (err) {
+      showError('Network error — please check your connection and try again.');
+      submitBtn.disabled    = false;
+      submitBtn.textContent = 'Create Account';
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -48,7 +48,7 @@
                 "oauthAccountNotLinked": "To confirm your identity, sign in with the same account you used originally",
                 "emailSignin": "The e-mail could not be sent",
                 "emailVerify": "Please verify your email, a new email has been sent",
-                "credentialsSignin": "Incorrect credentials. Wrong password, or username not found. New? Click 'Create an account' below.",
+                "credentialsSignin": "Wrong password, or username not found. Don't have an account? Click 'Create one' below.",
                 "sessionRequired": "Please sign in to access this page"
             }
         },

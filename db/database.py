@@ -24,6 +24,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id            TEXT PRIMARY KEY,
     identifier    TEXT UNIQUE NOT NULL,
+    email         TEXT,
     metadata      TEXT NOT NULL DEFAULT '{}',
     password_hash TEXT,
     created_at    TEXT NOT NULL
@@ -97,6 +98,12 @@ async def init_db() -> None:
         except Exception:
             pass  # Column already exists
 
+        # Migration: add email column if missing
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        except Exception:
+            pass  # Column already exists
+
         await db.commit()
 
 
@@ -136,7 +143,7 @@ class SQLiteDataLayer(BaseDataLayer):
         return await self.get_user(user.identifier)
 
     async def get_or_register_user(
-        self, username: str, password: str
+        self, username: str, password: str, email: str = ""
     ) -> Optional[PersistedUser]:
         """Create a brand-new account. Caller must confirm the username doesn't exist."""
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -144,8 +151,8 @@ class SQLiteDataLayer(BaseDataLayer):
         now = _now()
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
-                "INSERT OR IGNORE INTO users (id, identifier, metadata, password_hash, created_at) VALUES (?,?,?,?,?)",
-                (uid, username, json.dumps({}), hashed, now),
+                "INSERT OR IGNORE INTO users (id, identifier, email, metadata, password_hash, created_at) VALUES (?,?,?,?,?,?)",
+                (uid, username, email or None, json.dumps({}), hashed, now),
             )
             await db.commit()
         return await self.get_user(username)
