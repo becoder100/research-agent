@@ -1,0 +1,13 @@
+chainlit
+langgraph
+langchain
+langchain-groq
+langchain-community
+ddgs
+httpx
+beautifulsoup4
+python-dotenv
+pydantic
+aiosqlite
+bcrypt
+fpdf2

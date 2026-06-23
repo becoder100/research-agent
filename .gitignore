@@ -1,0 +1,23 @@
+# Environment — never commit real credentials
+.env
+
+# Database — local data, not for version control
+chat_history.db
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
