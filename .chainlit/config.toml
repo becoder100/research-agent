@@ -71,9 +71,8 @@ reaction_on_message_received = false
     max_size_mb = 500
 
 [features.audio]
-    # Enable audio features
-    enabled = true
-    # Sample rate of the audio
+    # Disabled — custom mic button in public/auth_enhance.js handles voice input
+    enabled = false
     sample_rate = 24000
 
 [features.mcp]
@@ -124,7 +123,7 @@ cot = "full"
 
 # Specify a CSS file that can be used to customize the user interface.
 # The CSS file can be served from the public directory or via an external link.
-# custom_css = "/public/test.css"
+custom_css = "/public/mic.css"
 
 # Specify additional attributes for a custom CSS file
 # custom_css_attributes = "media=\"print\""

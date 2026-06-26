@@ -397,45 +397,42 @@ class SQLiteDataLayer(BaseDataLayer):
                 user_identifier = u["identifier"]
 
         async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                "SELECT id FROM threads WHERE id = ?", (thread_id,)
-            ) as cur:
-                exists = await cur.fetchone()
-
-            if exists:
-                updates: Dict[str, Any] = {"updated_at": now}
-                if name is not None:
-                    updates["name"] = name
-                if user_id is not None:
-                    updates["user_id"] = user_id
-                if user_identifier is not None:
-                    updates["user_identifier"] = user_identifier
-                if metadata is not None:
-                    updates["metadata"] = json.dumps(metadata)
-                if tags is not None:
-                    updates["tags"] = json.dumps(tags)
-                set_sql = ", ".join(f"{k} = ?" for k in updates)
-                await db.execute(
-                    f"UPDATE threads SET {set_sql} WHERE id = ?",
-                    list(updates.values()) + [thread_id],
-                )
-            else:
-                await db.execute(
-                    """INSERT INTO threads
-                       (id, name, user_id, user_identifier, metadata, tags, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?)""",
-                    (
-                        thread_id,
-                        name,
-                        user_id,
-                        user_identifier,
-                        json.dumps(metadata or {}),
-                        json.dumps(tags or []),
-                        now,
-                        now,
-                    ),
-                )
+            # INSERT OR IGNORE guarantees the row exists and is safe under concurrent
+            # calls (second caller silently skips instead of hitting UNIQUE error).
+            # We always use safe column defaults here; the UPDATE below applies only
+            # the fields the caller actually passed, so partial updates stay correct.
+            await db.execute(
+                """INSERT OR IGNORE INTO threads
+                   (id, name, user_id, user_identifier, metadata, tags, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    thread_id,
+                    name,
+                    user_id,
+                    user_identifier,
+                    json.dumps(metadata or {}),
+                    json.dumps(tags or []),
+                    now,
+                    now,
+                ),
+            )
+            # Update only the fields that were explicitly provided by the caller.
+            updates: Dict[str, Any] = {"updated_at": now}
+            if name is not None:
+                updates["name"] = name
+            if user_id is not None:
+                updates["user_id"] = user_id
+            if user_identifier is not None:
+                updates["user_identifier"] = user_identifier
+            if metadata is not None:
+                updates["metadata"] = json.dumps(metadata)
+            if tags is not None:
+                updates["tags"] = json.dumps(tags)
+            set_sql = ", ".join(f"{k} = ?" for k in updates)
+            await db.execute(
+                f"UPDATE threads SET {set_sql} WHERE id = ?",
+                list(updates.values()) + [thread_id],
+            )
             await db.commit()
 
     # ── Misc ───────────────────────────────────────────────────────────────
