@@ -140,6 +140,15 @@ Instructions:
 Answer:"""
 
 
+SPOKEN_SUMMARY_PROMPT = """Summarize the following research report as a brief spoken message — 2 to 3 natural sentences, under 80 words.
+No markdown, no bullet points, no source citations, no headers. Write exactly what should be read aloud.
+
+Report:
+{report}
+
+Spoken summary:"""
+
+
 REFLECTION_PROMPT = """You are a quality-control assistant reviewing a research report.
 
 Original Sub-Questions:

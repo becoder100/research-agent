@@ -24,7 +24,9 @@ from agent.prompts import (
     CONVERSATIONAL_PROMPT,
     FOLLOWUP_ANSWER_PROMPT,
     REPORT_WRITER_PROMPT,
+    SPOKEN_SUMMARY_PROMPT,
 )
+from utils.voice import text_to_speech, transcribe_audio
 from db.database import SQLiteDataLayer, init_db
 from utils.export import safe_filename, to_markdown_bytes, to_pdf_bytes
 
@@ -71,6 +73,20 @@ async def _name_thread(name: str) -> None:
     if thread_id and cl_data.get_data_layer():
         label = name[:60] + ("..." if len(name) > 60 else "")
         await cl_data.get_data_layer().update_thread(thread_id=thread_id, name=label)
+
+
+async def _send_voice_summary(report: str) -> None:
+    """Generate a spoken summary of the report and send it as an audio element."""
+    try:
+        llm = get_llm()
+        summary = (await llm.ainvoke(SPOKEN_SUMMARY_PROMPT.format(report=report[:3000]))).content.strip()
+        audio_bytes = await asyncio.to_thread(text_to_speech, summary)
+        await cl.Message(
+            content="🔊 **Voice Summary**",
+            elements=[cl.Audio(name="summary.mp3", content=audio_bytes, mime="audio/mpeg", display="inline")],
+        ).send()
+    except Exception:
+        pass  # TTS is non-fatal — text report is still fully available
 
 
 async def _send_exports(report: str, query: str) -> None:
@@ -161,10 +177,17 @@ async def on_chat_start():
                 initial=True,
                 description="Show the agent's internal reasoning steps",
             ),
+            cl.input_widget.Switch(
+                id="Voice Summary",
+                label="Voice Summary",
+                initial=True,
+                description="Read out a brief spoken summary after research completes (when using voice input)",
+            ),
         ]
     ).send()
 
-    cl.user_session.set("settings", {"Max Sources": 10, "Show Reasoning Trace": True})
+    cl.user_session.set("settings", {"Max Sources": 10, "Show Reasoning Trace": True, "Voice Summary": True})
+    cl.user_session.set("voice_mode", False)
     cl.user_session.set("thread_named", False)
     cl.user_session.set("last_query", None)
     cl.user_session.set("last_report", None)
@@ -176,7 +199,9 @@ async def on_chat_resume(thread: cl.types.ThreadDict):
     cl.user_session.set("settings", {
         "Max Sources": saved.get("Max Sources", 10),
         "Show Reasoning Trace": saved.get("Show Reasoning Trace", True),
+        "Voice Summary": saved.get("Voice Summary", True),
     })
+    cl.user_session.set("voice_mode", False)
     cl.user_session.set("thread_named", True)
     cl.user_session.set("last_query", None)
     cl.user_session.set("last_report", None)
@@ -335,6 +360,11 @@ async def on_message(message: cl.Message):
         # ── Feature 3: Export report ───────────────────────────────────────
         await _send_exports(state["report"], state["query"])
 
+        # ── Voice Summary (TTS) ────────────────────────────────────────────
+        if settings.get("Voice Summary", True) and cl.user_session.get("voice_mode"):
+            await _send_voice_summary(state["report"])
+            cl.user_session.set("voice_mode", False)
+
         # ── Feature 2: Save context for follow-up detection ────────────────
         cl.user_session.set("last_query", state["query"])
         cl.user_session.set("last_report", state["report"])
@@ -347,3 +377,56 @@ async def on_message(message: cl.Message):
             )
         ).send()
         raise
+
+
+# ── Voice Input Handlers ───────────────────────────────────────────────────
+
+@cl.on_audio_start
+async def on_audio_start():
+    cl.user_session.set("audio_buffer", [])
+    cl.user_session.set("audio_mime", "audio/webm")
+
+
+@cl.on_audio_chunk
+async def on_audio_chunk(chunk: cl.InputAudioChunk):
+    buf = cl.user_session.get("audio_buffer") or []
+    if chunk.isStart:
+        cl.user_session.set("audio_mime", chunk.mimeType)
+    buf.append(chunk.data)
+    cl.user_session.set("audio_buffer", buf)
+
+
+@cl.on_audio_end
+async def on_audio_end(elements=None):
+    buf = cl.user_session.get("audio_buffer") or []
+    cl.user_session.set("audio_buffer", [])
+
+    if not buf:
+        return
+
+    audio_bytes = b"".join(buf)
+
+    # Too short — likely a misclick or silence
+    if len(audio_bytes) < 1000:
+        await cl.Message(content="I didn't catch that — please hold the mic button and speak clearly.").send()
+        return
+
+    mime = cl.user_session.get("audio_mime") or "audio/webm"
+    try:
+        text = await asyncio.to_thread(transcribe_audio, audio_bytes, mime)
+    except Exception as e:
+        await cl.Message(content=f"⚠️ Transcription failed: {e}").send()
+        return
+
+    if not text:
+        await cl.Message(content="Hmm, I couldn't make out what you said. Try speaking a bit louder?").send()
+        return
+
+    # Echo what was heard so the user can confirm
+    await cl.Message(content=f"🎤 *\"{text}\"*").send()
+
+    # Flag voice mode so TTS summary is generated at the end
+    cl.user_session.set("voice_mode", True)
+
+    # Hand off to the main message handler unchanged
+    await on_message(cl.Message(content=text))
