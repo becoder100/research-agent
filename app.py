@@ -6,7 +6,7 @@ import chainlit as cl
 import chainlit.data as cl_data
 from chainlit.server import app as chainlit_app
 from dotenv import load_dotenv
-from fastapi import Request
+from fastapi import Request, UploadFile, File
 from fastapi.responses import JSONResponse
 
 from agent.nodes import (
@@ -104,6 +104,19 @@ async def _send_exports(report: str, query: str) -> None:
         ).send()
     except Exception as e:
         await cl.Message(content=f"⚠️ Export failed: {e}").send()
+
+
+# ── Transcription endpoint (called by the custom mic button in the UI) ────────
+
+@chainlit_app.post("/api/transcribe")
+async def transcribe_endpoint(audio: UploadFile = File(...)):
+    audio_bytes = await audio.read()
+    mime_type = audio.content_type or "audio/webm"
+    try:
+        text = await asyncio.to_thread(transcribe_audio, audio_bytes, mime_type)
+        return JSONResponse({"text": text})
+    except Exception as e:
+        return JSONResponse({"error": str(e), "text": ""}, status_code=500)
 
 
 # ── Registration endpoint (called by /public/register.html) ────────────────
