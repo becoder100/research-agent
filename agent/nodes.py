@@ -1,10 +1,9 @@
 
-import json
 import os
-import re
 
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
+from pydantic import BaseModel, Field
 
 from agent.prompts import (
     CONVERSATIONAL_PROMPT,
@@ -30,22 +29,20 @@ def get_llm() -> ChatGroq:
     )
 
 
-def _extract_json(text: str):
-    """Extract JSON from LLM response that may have surrounding text."""
-    text = text.strip()
-    # Try direct parse first
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    # Try to find JSON array or object with regex
-    match = re.search(r"(\[.*?\]|\{.*?\})", text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except json.JSONDecodeError:
-            pass
-    return None
+class PlannerOutput(BaseModel):
+    sub_questions: list[str] = Field(
+        description="3 to 5 focused sub-questions that together fully answer the original query"
+    )
+
+
+class ReflectionOutput(BaseModel):
+    complete: bool = Field(
+        description="True if every sub-question is adequately answered in the report"
+    )
+    missing: list[str] = Field(
+        default_factory=list,
+        description="Sub-questions that are not adequately answered; empty when complete is True",
+    )
 
 
 def classify_intent(message: str) -> str:
@@ -85,19 +82,10 @@ def answer_followup(message: str, last_query: str, last_report: str) -> str:
 
 
 def planner_node(state: AgentState) -> dict:
-    llm = get_llm()
+    structured_llm = get_llm().with_structured_output(PlannerOutput)
     prompt = PLANNER_PROMPT.format(query=state["query"])
-    response = llm.invoke(prompt)
-    content = response.content.strip()
-
-    sub_questions = _extract_json(content)
-    if not isinstance(sub_questions, list):
-        # Fallback: split by newlines if JSON parse fails
-        sub_questions = [
-            line.strip().lstrip("-•123456789. ")
-            for line in content.splitlines()
-            if line.strip()
-        ][:5]
+    result: PlannerOutput = structured_llm.invoke(prompt)
+    sub_questions = result.sub_questions
 
     trace = list(state.get("reasoning_trace", []))
     trace.append(f"Planned sub-questions: {sub_questions}")
@@ -105,8 +93,8 @@ def planner_node(state: AgentState) -> dict:
     return {"sub_questions": sub_questions, "reasoning_trace": trace}
 
 
-def web_search_node(state: AgentState) -> dict:
-    results = search_and_scrape(
+async def web_search_node(state: AgentState) -> dict:
+    results = await search_and_scrape(
         state["sub_questions"],
         max_sources=state.get("max_sources", 10),
     )
@@ -180,23 +168,17 @@ def reflection_node(state: AgentState) -> dict:
     sub_questions = state.get("sub_questions", [])
     report = state.get("report", "")
 
-    llm = get_llm()
+    structured_llm = get_llm().with_structured_output(ReflectionOutput)
     prompt = REFLECTION_PROMPT.format(
         sub_questions="\n".join(f"- {q}" for q in sub_questions),
         report=report,
     )
-    response = llm.invoke(prompt)
-    content = response.content.strip()
+    result: ReflectionOutput = structured_llm.invoke(prompt)
 
-    result = _extract_json(content)
-
-    if not isinstance(result, dict):
+    if result.complete:
         return {"status": "complete"}
 
-    if result.get("complete", True):
-        return {"status": "complete"}
-
-    missing = result.get("missing") or state.get("sub_questions", [])
+    missing = result.missing or sub_questions
     return {
         "status": "retry",
         "iteration_count": iteration_count + 1,

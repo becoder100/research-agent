@@ -1,4 +1,5 @@
-import time
+import asyncio
+import logging
 from typing import List
 
 import httpx
@@ -7,9 +8,11 @@ from ddgs import DDGS
 
 from utils.helpers import clean_text
 
+logger = logging.getLogger(__name__)
+
 
 def search_web(query: str, max_results: int = 5) -> List[dict]:
-    """Search DuckDuckGo and return list of {url, title, snippet}."""
+    """Search DuckDuckGo and return list of {url, title, snippet}. Runs sync (DDGS has no async API)."""
     try:
         results = []
         with DDGS() as ddgs:
@@ -20,26 +23,25 @@ def search_web(query: str, max_results: int = 5) -> List[dict]:
                     "snippet": r.get("body", ""),
                 })
         return results
-    except Exception:
+    except Exception as e:
+        logger.warning("DuckDuckGo search failed for query '%s': %s", query, e)
         return []
 
 
-def scrape_url(url: str) -> str:
-    """Scrape a URL and return cleaned text content (max 1500 words)."""
+async def scrape_url(client: httpx.AsyncClient, url: str) -> str:
+    """Async-scrape a single URL using a shared AsyncClient. Returns cleaned text (max 1500 words)."""
     if not url:
         return ""
     try:
         headers = {"User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)"}
-        response = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
+        response = await client.get(url, headers=headers, timeout=10, follow_redirects=True)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Remove noisy tags
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
             tag.decompose()
 
-        # Try to find the most content-rich element
         content = None
         for selector in ["main", "article", "body"]:
             content = soup.find(selector)
@@ -51,41 +53,49 @@ def scrape_url(url: str) -> str:
 
         text = content.get_text(separator=" ", strip=True)
         return clean_text(text, max_words=1500)
-    except Exception:
+    except Exception as e:
+        logger.debug("Scrape failed for %s: %s", url, e)
         return ""
 
 
-def search_and_scrape(sub_questions: List[str], max_sources: int = 10) -> List[dict]:
-    """Search and scrape for each sub-question, returning combined unique sources."""
-    seen_urls = set()
-    all_results = []
+async def search_and_scrape(sub_questions: List[str], max_sources: int = 10) -> List[dict]:
+    """Search all sub-questions concurrently, then scrape all candidate URLs concurrently."""
 
-    for question in sub_questions:
+    # Step 1: Run all DuckDuckGo searches concurrently (each in its own thread — DDGS is sync)
+    search_results_per_q: List[List[dict]] = await asyncio.gather(
+        *[asyncio.to_thread(search_web, q, 5) for q in sub_questions]
+    )
+
+    # Deduplicate URLs while preserving order
+    seen_urls: set = set()
+    candidates: List[dict] = []
+    for results in search_results_per_q:
+        for r in results:
+            url = r.get("url", "")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                candidates.append(r)
+
+    # Fetch up to max_sources * 2 candidates so we have spares after filtering empties
+    to_fetch = candidates[: max_sources * 2]
+
+    # Step 2: Scrape all candidate URLs concurrently with a single shared AsyncClient
+    async with httpx.AsyncClient() as client:
+        contents: List[str] = await asyncio.gather(
+            *[scrape_url(client, r["url"]) for r in to_fetch]
+        )
+
+    # Build final list — keep only non-empty, stop at max_sources
+    all_results: List[dict] = []
+    for r, content in zip(to_fetch, contents):
+        if not content:
+            continue
+        all_results.append({
+            "url": r["url"],
+            "title": r.get("title", ""),
+            "content": content,
+        })
         if len(all_results) >= max_sources:
             break
-
-        search_results = search_web(question, max_results=5)
-
-        for result in search_results:
-            if len(all_results) >= max_sources:
-                break
-
-            url = result.get("url", "")
-            if not url or url in seen_urls:
-                continue
-
-            seen_urls.add(url)
-
-            time.sleep(1)  # polite scraping delay
-            content = scrape_url(url)
-
-            if not content:
-                continue
-
-            all_results.append({
-                "url": url,
-                "title": result.get("title", ""),
-                "content": content,
-            })
 
     return all_results

@@ -298,7 +298,7 @@ async def on_message(message: cl.Message):
         # ── Step 2: Web Search ─────────────────────────────────────────────
         async with cl.Step(name="🌐 Scouring the web...", type="tool") as step:
             step.input = f"Searching {len(state['sub_questions'])} sub-questions across up to {max_sources} sources"
-            state.update(await asyncio.to_thread(web_search_node, state))
+            state.update(await web_search_node(state))
 
             n = len(state["web_results"])
             if n == 0:
@@ -349,7 +349,7 @@ async def on_message(message: cl.Message):
             if state.get("status") == "retry":
                 step.output = "Spotted some gaps — doing a quick follow-up search..."
                 async with cl.Step(name="🌐 Digging deeper...", type="tool") as step2:
-                    state.update(await asyncio.to_thread(web_search_node, state))
+                    state.update(await web_search_node(state))
                     step2.output = f"Found {len(state['web_results'])} sources total — filling in the gaps"
                 async with cl.Step(name="✍️ Updating the report...", type="run") as step3:
                     state.update(await asyncio.to_thread(reconciler_node, state))

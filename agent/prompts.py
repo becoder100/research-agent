@@ -42,7 +42,7 @@ User: {message}
 You:"""
 
 
-PLANNER_PROMPT = """You are a research planning assistant. Your task is to decompose a user query into 3-5 focused, specific sub-questions that together will fully answer the original query.
+PLANNER_PROMPT = """You are a research planning assistant. Decompose the user query into 3 to 5 focused, specific sub-questions that together will fully answer the original query.
 
 User Query: {query}
 
@@ -50,12 +50,7 @@ Instructions:
 - Each sub-question should target a distinct aspect of the query
 - Sub-questions should be specific enough to search the web effectively
 - Cover different angles: facts, context, comparisons, recent developments
-- Return ONLY a raw JSON array of strings, no explanation, no markdown, no extra text
-
-Example output format:
-["What is X?", "How does Y work?", "What are the latest developments in Z?"]
-
-Output:"""
+- Produce between 3 and 5 sub-questions"""
 
 
 RECONCILER_PROMPT = """You are a fact-checking assistant analyzing multiple web sources for contradictions.
@@ -160,11 +155,5 @@ Current Report:
 Instructions:
 - Check if each sub-question is adequately answered in the report
 - A question is "answered" if the report contains relevant, substantive information about it
-- Return ONLY a raw JSON object, no extra text, no markdown
-
-Output format:
-{{"complete": true, "missing": []}}
-or
-{{"complete": false, "missing": ["unanswered question 1", "unanswered question 2"]}}
-
-Output:"""
+- Set complete to True only if every sub-question is answered; otherwise False
+- List only the unanswered sub-questions in missing (empty list when complete is True)"""
