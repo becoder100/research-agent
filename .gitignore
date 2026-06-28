@@ -1,8 +1,18 @@
 # Environment — never commit real credentials
 .env
+.env.*
+!.env.example
 
-# Database — local data, not for version control
-chat_history.db
+# Databases — local data, not for version control
+*.db
+*.sqlite
+*.sqlite3
+
+# ChromaDB persistent vector store — user data, large, not for version control
+chroma_db/
+
+# HuggingFace model cache (sentence-transformers downloads here)
+.cache/
 
 # Python bytecode
 __pycache__/
@@ -15,9 +25,17 @@ __pycache__/
 venv/
 env/
 
+# Test / scratch files
+test_*.pdf
+test_*.txt
+
 # OS / editor noise
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Logs
+*.log
+logs/
