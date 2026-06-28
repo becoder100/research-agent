@@ -14,6 +14,7 @@ from agent.prompts import (
     RECONCILER_PROMPT,
     REFLECTION_PROMPT,
     REPORT_WRITER_PROMPT,
+    SOURCE_ROUTER_PROMPT,
 )
 from agent.state import AgentState
 from tools.web_search import search_and_scrape
@@ -52,6 +53,18 @@ def classify_intent(message: str) -> str:
     response = llm.invoke(prompt)
     result = response.content.strip().upper()
     return "RESEARCH" if "RESEARCH" in result else "CHAT"
+
+
+def classify_source(query: str) -> str:
+    """Returns 'DOC_ONLY', 'HYBRID', or 'WEB_ONLY'. Called only when documents are uploaded."""
+    llm = get_llm()
+    prompt = SOURCE_ROUTER_PROMPT.format(query=query)
+    result = llm.invoke(prompt).content.strip().upper()
+    if "DOC_ONLY" in result:
+        return "DOC_ONLY"
+    if "HYBRID" in result:
+        return "HYBRID"
+    return "WEB_ONLY"
 
 
 def conversational_node(message: str) -> str:
@@ -132,6 +145,7 @@ def reconciler_node(state: AgentState) -> dict:
 
 def report_writer_node(state: AgentState) -> dict:
     web_results = state.get("web_results", [])
+    rag_chunks = state.get("rag_chunks", [])
     conflicts = state.get("conflicts", [])
 
     sources_context = "\n\n".join(
@@ -139,9 +153,15 @@ def report_writer_node(state: AgentState) -> dict:
         for i, r in enumerate(web_results)
     )
 
-    conflicts_text = (
-        "\n".join(conflicts) if conflicts else "No conflicts found"
-    )
+    if rag_chunks:
+        offset = len(web_results)
+        doc_context = "\n\n".join(
+            f"Source {offset + i + 1}. [Uploaded: {c['source']}]:\n{c['content'][:1000]}"
+            for i, c in enumerate(rag_chunks)
+        )
+        sources_context = (sources_context + "\n\n" + doc_context).strip()
+
+    conflicts_text = "\n".join(conflicts) if conflicts else "No conflicts found"
 
     llm = get_llm()
     prompt = REPORT_WRITER_PROMPT.format(

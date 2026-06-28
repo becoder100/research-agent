@@ -1,3 +1,16 @@
+SOURCE_ROUTER_PROMPT = """You are a routing assistant. The user has uploaded documents to their knowledge base and is now asking a question.
+
+Decide the best source to answer this question:
+
+- DOC_ONLY: the question is specifically about the uploaded documents (e.g. "what does this say about X", "summarize this", "explain this document", "according to the PDF", or the question is clearly about content that would only exist in a private/uploaded document)
+- HYBRID: the question could benefit from BOTH the document AND fresh web information (e.g. verifying document claims against recent data, comparing to current industry standards, or the topic needs both internal and external context)
+- WEB_ONLY: the question is a general research question with no connection to the uploaded documents (e.g. current news, general knowledge, clearly unrelated topics)
+
+User question: "{query}"
+
+Answer with exactly one word: DOC_ONLY, HYBRID, or WEB_ONLY"""
+
+
 INTENT_CLASSIFIER_PROMPT = """You are a message classifier. Decide if the user's message requires web research or can be answered conversationally.
 
 User message: "{message}"

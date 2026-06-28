@@ -13,6 +13,7 @@ from agent.nodes import (
     answer_followup,
     classify_followup,
     classify_intent,
+    classify_source,
     get_llm,
     planner_node,
     reconciler_node,
@@ -29,6 +30,7 @@ from agent.prompts import (
 from utils.voice import text_to_speech, transcribe_audio
 from db.database import SQLiteDataLayer, init_db
 from utils.export import safe_filename, to_markdown_bytes, to_pdf_bytes
+from tools.rag import collection_has_data, ingest_document, retrieve_chunks
 
 load_dotenv()
 
@@ -38,15 +40,38 @@ cl_data._data_layer = SQLiteDataLayer()
 WELCOME_MESSAGE = "Hii I am your multisource research agent"
 
 
+def _user_collection() -> str:
+    """Return a stable, per-user ChromaDB collection name derived from the logged-in username."""
+    try:
+        user = cl.context.session.user
+        identifier = (user.identifier if user else None) or "anonymous"
+    except Exception:
+        identifier = "anonymous"
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", identifier)
+    name = f"u_{safe}"[:63].rstrip("_-")
+    return name if len(name) >= 3 else f"{name}_x"
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _build_report_prompt(state: dict) -> str:
     web_results = state.get("web_results", [])
+    rag_chunks = state.get("rag_chunks", [])
     conflicts = state.get("conflicts", [])
+
     sources_context = "\n\n".join(
         f"Source {i+1}. {r['title']} ({r['url']}):\n{r['content'][:1000]}"
         for i, r in enumerate(web_results)
     )
+
+    if rag_chunks:
+        offset = len(web_results)
+        doc_context = "\n\n".join(
+            f"Source {offset + i + 1}. [Uploaded: {c['source']}]:\n{c['content'][:1000]}"
+            for i, c in enumerate(rag_chunks)
+        )
+        sources_context = (sources_context + "\n\n" + doc_context).strip()
+
     conflicts_text = "\n".join(conflicts) if conflicts else "No conflicts found"
     return REPORT_WRITER_PROMPT.format(
         query=state["query"],
@@ -204,6 +229,11 @@ async def on_chat_start():
     cl.user_session.set("thread_named", False)
     cl.user_session.set("last_query", None)
     cl.user_session.set("last_report", None)
+    # RAG: persistent per-user collection — survives across sessions
+    collection = _user_collection()
+    cl.user_session.set("rag_collection", collection)
+    has_docs = await asyncio.to_thread(collection_has_data, collection)
+    cl.user_session.set("has_documents", has_docs)
 
 
 @cl.on_chat_resume
@@ -218,6 +248,11 @@ async def on_chat_resume(thread: cl.types.ThreadDict):
     cl.user_session.set("thread_named", True)
     cl.user_session.set("last_query", None)
     cl.user_session.set("last_report", None)
+    # RAG: restore the same persistent collection for this user
+    collection = _user_collection()
+    cl.user_session.set("rag_collection", collection)
+    has_docs = await asyncio.to_thread(collection_has_data, collection)
+    cl.user_session.set("has_documents", has_docs)
 
 
 @cl.on_settings_update
@@ -235,13 +270,39 @@ async def on_settings_update(settings):
 @cl.on_message
 async def on_message(message: cl.Message):
     query = message.content.strip()
-    if not query:
-        await cl.Message(content="Say something — I'm listening!").send()
-        return
-
     settings = cl.user_session.get("settings") or {}
     max_sources = int(settings.get("Max Sources", 10))
     show_trace = settings.get("Show Reasoning Trace", True)
+
+    # ── File upload handling (PDF / text documents) ────────────────────────
+    _SUPPORTED_EXTS = {".pdf", ".txt", ".md"}
+    uploaded_files = [
+        el for el in (message.elements or [])
+        if hasattr(el, "name") and any(el.name.lower().endswith(ext) for ext in _SUPPORTED_EXTS)
+    ]
+
+    if uploaded_files:
+        collection_name = cl.user_session.get("rag_collection")
+        ingested_names = []
+        async with cl.Step(name="Reading", type="run") as step:
+            for el in uploaded_files:
+                try:
+                    file_bytes = el.content if el.content else open(el.path, "rb").read()
+                    chunk_count = await asyncio.to_thread(
+                        ingest_document, file_bytes, el.name, collection_name
+                    )
+                    ingested_names.append(f"{el.name} ({chunk_count} chunks)")
+                except Exception as exc:
+                    ingested_names.append(f"{el.name} (failed: {exc})")
+            cl.user_session.set("has_documents", True)
+            step.output = "Indexed: " + ", ".join(ingested_names)
+
+        if not query:
+            return
+
+    if not query:
+        await cl.Message(content="Say something — I'm listening!").send()
+        return
 
     # Name the thread on first message of the session
     if not cl.user_session.get("thread_named"):
@@ -272,6 +333,18 @@ async def on_message(message: cl.Message):
             await _stream_message(CONVERSATIONAL_PROMPT.format(message=query))
             return
 
+        # ── Source routing (smart: only when documents are available) ────────
+        source_mode = "WEB_ONLY"
+        if cl.user_session.get("has_documents"):
+            async with cl.Step(name="Thinking", type="run") as step:
+                source_mode = await asyncio.to_thread(classify_source, query)
+                labels = {
+                    "DOC_ONLY": "Question is about your uploaded documents — answering from them directly",
+                    "HYBRID":   "Question benefits from both your documents and the web — using both",
+                    "WEB_ONLY": "General research question — searching the web",
+                }
+                step.output = labels[source_mode]
+
         # ── Research pipeline ──────────────────────────────────────────────
         await _stream_message(ACKNOWLEDGMENT_PROMPT.format(query=query))
 
@@ -279,6 +352,7 @@ async def on_message(message: cl.Message):
             "query": query,
             "sub_questions": [],
             "web_results": [],
+            "rag_chunks": [],
             "conflicts": [],
             "report": "",
             "reasoning_trace": [],
@@ -288,52 +362,75 @@ async def on_message(message: cl.Message):
         }
 
         # ── Step 1: Planner ────────────────────────────────────────────────
-        async with cl.Step(name="🧠 Breaking this down...", type="run") as step:
+        async with cl.Step(name="Planning", type="run") as step:
             step.input = query
             state.update(await asyncio.to_thread(planner_node, state))
             n = len(state["sub_questions"])
             sub_q_list = "\n".join(f"{i+1}. {q}" for i, q in enumerate(state["sub_questions"]))
             step.output = f"Got it! I'll tackle this from {n} angle{'s' if n != 1 else ''}:\n{sub_q_list}"
 
-        # ── Step 2: Web Search ─────────────────────────────────────────────
-        async with cl.Step(name="🌐 Scouring the web...", type="tool") as step:
-            step.input = f"Searching {len(state['sub_questions'])} sub-questions across up to {max_sources} sources"
-            state.update(await web_search_node(state))
+        # ── Step 2: Web Search (skipped for DOC_ONLY) ─────────────────────
+        if source_mode in ("WEB_ONLY", "HYBRID"):
+            async with cl.Step(name="Searching", type="tool") as step:
+                step.input = f"Searching {len(state['sub_questions'])} sub-questions across up to {max_sources} sources"
+                state.update(await web_search_node(state))
 
-            n = len(state["web_results"])
-            if n == 0:
-                step.output = "Hmm, couldn't find anything — might need a different angle."
-                await cl.Message(
-                    content=(
-                        "Hmm, I came up empty on that one. It might be a very niche topic, "
-                        "or there could be a connectivity hiccup on my end.\n\n"
-                        "A few things to try:\n"
-                        "- Rephrase the question with different keywords\n"
-                        "- Make it a bit more specific or a bit more general\n"
-                        "- Check your internet connection and try again"
-                    )
-                ).send()
-                return
+                n = len(state["web_results"])
+                if n == 0 and source_mode == "WEB_ONLY":
+                    step.output = "Hmm, couldn't find anything — might need a different angle."
+                    await cl.Message(
+                        content=(
+                            "Hmm, I came up empty on that one. It might be a very niche topic, "
+                            "or there could be a connectivity hiccup on my end.\n\n"
+                            "A few things to try:\n"
+                            "- Rephrase the question with different keywords\n"
+                            "- Make it a bit more specific or a bit more general\n"
+                            "- Check your internet connection and try again"
+                        )
+                    ).send()
+                    return
 
-            url_list = "\n".join(
-                f"- [{r['title'] or r['url']}]({r['url']})" for r in state["web_results"]
-            )
-            step.output = f"Nice! Pulled in {n} solid source{'s' if n != 1 else ''} 📚\n{url_list}"
+                url_list = "\n".join(
+                    f"- [{r['title'] or r['url']}]({r['url']})" for r in state["web_results"]
+                )
+                step.output = f"Nice! Pulled in {n} solid source{'s' if n != 1 else ''} 📚\n{url_list}"
 
-        # ── Step 3: Reconciler ─────────────────────────────────────────────
-        async with cl.Step(name="⚖️ Cross-checking sources...", type="run") as step:
-            step.input = f"Comparing {len(state['web_results'])} sources for contradictions"
-            state.update(await asyncio.to_thread(reconciler_node, state))
+        # ── Step 3: Reconciler (skipped for DOC_ONLY) ─────────────────────
+        if source_mode in ("WEB_ONLY", "HYBRID") and state["web_results"]:
+            async with cl.Step(name="Verifying", type="run") as step:
+                step.input = f"Comparing {len(state['web_results'])} sources for contradictions"
+                state.update(await asyncio.to_thread(reconciler_node, state))
 
-            conflicts = state.get("conflicts", [])
-            if conflicts:
-                conflict_text = "\n".join(f"- {c}" for c in conflicts)
-                step.output = f"Heads up — found {len(conflicts)} conflict{'s' if len(conflicts) != 1 else ''} worth noting:\n{conflict_text}"
-            else:
-                step.output = "All sources line up — no contradictions found ✅"
+                conflicts = state.get("conflicts", [])
+                if conflicts:
+                    conflict_text = "\n".join(f"- {c}" for c in conflicts)
+                    step.output = f"Heads up — found {len(conflicts)} conflict{'s' if len(conflicts) != 1 else ''} worth noting:\n{conflict_text}"
+                else:
+                    step.output = "All sources line up — no contradictions found ✅"
+
+        # ── Step 3.5: RAG retrieval (skipped for WEB_ONLY) ────────────────
+        if source_mode in ("DOC_ONLY", "HYBRID"):
+            collection_name = cl.user_session.get("rag_collection")
+            async with cl.Step(name="Finding", type="tool") as step:
+                # Retrieve for each sub-question to get diverse, relevant chunks
+                seen, all_chunks = set(), []
+                for sq in state["sub_questions"]:
+                    for chunk in await asyncio.to_thread(retrieve_chunks, sq, collection_name, 3):
+                        if chunk["content"] not in seen:
+                            seen.add(chunk["content"])
+                            all_chunks.append(chunk)
+                state["rag_chunks"] = all_chunks
+                if all_chunks:
+                    sources = ", ".join(sorted({c["source"] for c in all_chunks}))
+                    step.output = f"Found {len(all_chunks)} relevant chunk(s) from: {sources}"
+                    trace = list(state.get("reasoning_trace", []))
+                    trace.append(f"Retrieved {len(all_chunks)} document chunks from: {sources}")
+                    state["reasoning_trace"] = trace
+                else:
+                    step.output = "No relevant chunks found in your documents for this question"
 
         # ── Step 4: Report Writer (streamed) ───────────────────────────────
-        async with cl.Step(name="✍️ Writing your report...", type="run") as step:
+        async with cl.Step(name="Writing", type="run") as step:
             step.input = "Synthesizing everything into a structured report"
             report_content = await _stream_message(_build_report_prompt(state))
             state["report"] = report_content
@@ -343,15 +440,15 @@ async def on_message(message: cl.Message):
             state["reasoning_trace"] = trace
             step.output = "Done! Report's above 👆"
 
-        # ── Step 5: Reflection (optional retry) ───────────────────────────
-        async with cl.Step(name="🔍 Making sure nothing's missing...", type="run") as step:
+        # ── Step 5: Reflection + retry (web retry only for WEB_ONLY/HYBRID) ──
+        async with cl.Step(name="Reviewing", type="run") as step:
             state.update(await asyncio.to_thread(reflection_node, state))
-            if state.get("status") == "retry":
+            if state.get("status") == "retry" and source_mode in ("WEB_ONLY", "HYBRID"):
                 step.output = "Spotted some gaps — doing a quick follow-up search..."
-                async with cl.Step(name="🌐 Digging deeper...", type="tool") as step2:
+                async with cl.Step(name="Searching", type="tool") as step2:
                     state.update(await web_search_node(state))
                     step2.output = f"Found {len(state['web_results'])} sources total — filling in the gaps"
-                async with cl.Step(name="✍️ Updating the report...", type="run") as step3:
+                async with cl.Step(name="Writing", type="run") as step3:
                     state.update(await asyncio.to_thread(reconciler_node, state))
                     report_content = await _stream_message(_build_report_prompt(state))
                     state["report"] = report_content
@@ -361,11 +458,12 @@ async def on_message(message: cl.Message):
                     state["reasoning_trace"] = trace
                     step3.output = "Updated report's above 👆"
             else:
+                state["status"] = "complete"
                 step.output = "All angles covered — report is complete ✅"
 
         # ── Reasoning Trace ────────────────────────────────────────────────
         if show_trace and state.get("reasoning_trace"):
-            async with cl.Step(name="🔬 Full Reasoning Trace", type="run") as step:
+            async with cl.Step(name="Reasoning", type="run") as step:
                 step.output = "\n".join(
                     f"{i+1}. {entry}" for i, entry in enumerate(state["reasoning_trace"])
                 )

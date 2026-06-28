@@ -12,3 +12,6 @@ pydantic
 aiosqlite
 bcrypt
 fpdf2
+chromadb
+sentence-transformers
+pypdf

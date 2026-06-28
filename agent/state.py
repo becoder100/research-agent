@@ -5,6 +5,7 @@ class AgentState(TypedDict):
     query: str
     sub_questions: List[str]
     web_results: List[dict]      # each: {url, title, content}
+    rag_chunks: List[dict]       # each: {content, source} — from uploaded documents
     conflicts: List[str]
     report: str
     reasoning_trace: List[str]
