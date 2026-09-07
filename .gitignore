@@ -39,3 +39,6 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Local agent/tool state
+.understand-anything/
