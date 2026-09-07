@@ -1,29 +1,35 @@
 import io
 import logging
 import uuid
-from typing import List
+from typing import TYPE_CHECKING, Any, List
 
-import chromadb
 from pypdf import PdfReader
-from sentence_transformers import SentenceTransformer
+
+if TYPE_CHECKING:
+    import chromadb
+    from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
-_embedding_model: SentenceTransformer | None = None
-_chroma_client: chromadb.ClientAPI | None = None
+_embedding_model: Any = None
+_chroma_client: Any = None
 
 
-def _get_embedding_model() -> SentenceTransformer:
+def _get_embedding_model() -> Any:
     global _embedding_model
     if _embedding_model is None:
         logger.info("Loading sentence-transformers model (first-time download may take a moment)...")
+        from sentence_transformers import SentenceTransformer
+
         _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
     return _embedding_model
 
 
-def _get_chroma_client() -> chromadb.ClientAPI:
+def _get_chroma_client() -> Any:
     global _chroma_client
     if _chroma_client is None:
+        import chromadb
+
         _chroma_client = chromadb.PersistentClient(path="./chroma_db")
     return _chroma_client
 
