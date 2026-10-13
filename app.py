@@ -34,8 +34,15 @@ from tools.rag import collection_has_data, ingest_document, retrieve_chunks
 
 load_dotenv()
 
+
 # Register the SQLite data layer at module level
 cl_data._data_layer = SQLiteDataLayer()
+
+
+@chainlit_app.on_event("startup")
+async def _init_db_on_startup() -> None:
+    await init_db()
+
 
 WELCOME_MESSAGE = "Hii I am your multisource research agent"
 
